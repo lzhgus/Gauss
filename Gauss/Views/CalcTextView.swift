@@ -18,8 +18,9 @@ final class CalcTextView: NSTextView {
     private var ghostSuggestion: String?
     /// The range of the partial word being completed.
     private var ghostWordRange: NSRange?
-    /// The overlay layer for drawing ghost text.
-    private var ghostLayer: CATextLayer?
+    /// TextKit stack for drawing ghost overlay with the same metrics as the editor.
+    private var ghostTextStorage: NSTextStorage?
+    private var ghostDrawOrigin: CGPoint = .zero
     /// Whether we're currently accepting a ghost (to avoid re-triggering).
     private var isAcceptingGhost = false
 
@@ -54,9 +55,6 @@ final class CalcTextView: NSTextView {
         allowsUndo = true
         usesFindBar = true
 
-        // Enable layer-backing for ghost text overlay
-        wantsLayer = true
-
         // Insets for comfortable reading
         textContainerInset = NSSize(width: 8, height: 8)
 
@@ -83,6 +81,16 @@ final class CalcTextView: NSTextView {
         }
     }
 
+    /// The ghost hides the rest of the line and redraws it shifted, so it must
+    /// go away as soon as the caret leaves the spot it was computed for.
+    override func setSelectedRanges(_ ranges: [NSValue], affinity: NSSelectionAffinity, stillSelecting: Bool) {
+        super.setSelectedRanges(ranges, affinity: affinity, stillSelecting: stillSelecting)
+        if let wordRange = ghostWordRange,
+           selectedRange() != NSRange(location: NSMaxRange(wordRange), length: 0) {
+            clearGhost()
+        }
+    }
+
     // MARK: - Ghost Text Logic
 
     private func updateGhostSuggestion() {
@@ -91,19 +99,11 @@ final class CalcTextView: NSTextView {
 
         guard let provider = completionProvider else { return }
 
-        // Get the partial word at cursor
         let cursorPos = selectedRange().location
-        guard cursorPos > 0 else { return }
-
         let text = string as NSString
         let totalLength = text.length
-        guard cursorPos <= totalLength else { return }
-
-        // Don't suggest if cursor is not at end of a word (e.g., cursor in middle of text)
-        if cursorPos < totalLength {
-            let nextChar = Character(UnicodeScalar(text.character(at: cursorPos))!)
-            if nextChar.isLetter || nextChar.isNumber { return }
-        }
+        guard cursorPos > 0, cursorPos <= totalLength else { return }
+        guard Self.shouldShowGhost(in: text, cursorPos: cursorPos) else { return }
 
         // Find the start of the current word
         var wordStart = cursorPos
@@ -132,51 +132,112 @@ final class CalcTextView: NSTextView {
         showGhostText(remaining, atCursorPosition: cursorPos)
     }
 
+    static func shouldShowGhost(in text: NSString, cursorPos: Int) -> Bool {
+        let totalLength = text.length
+        guard cursorPos > 0, cursorPos <= totalLength else { return false }
+        if cursorPos < totalLength {
+            let unichar = text.character(at: cursorPos)
+            if let scalar = UnicodeScalar(unichar) {
+                let ch = Character(scalar)
+                if ch.isLetter || ch.isNumber { return false }
+            }
+        }
+        return true
+    }
+
+    private func ghostAttributes(at pos: Int) -> [NSAttributedString.Key: Any] {
+        let length = (string as NSString).length
+        let idx = min(max(0, pos - 1), max(0, length - 1))
+        var attrs: [NSAttributedString.Key: Any]
+        if length > 0, let storage = textStorage {
+            attrs = storage.attributes(at: idx, effectiveRange: nil)
+        } else {
+            attrs = typingAttributes
+        }
+        attrs[.foregroundColor] = NSColor.tertiaryLabelColor
+        if attrs[.font] == nil {
+            attrs[.font] = font ?? Theme.monoFont
+        }
+        return attrs
+    }
+
+    private func computeGhostDrawOrigin(atCharacter pos: Int, layoutManager: NSLayoutManager, textContainer: NSTextContainer) -> CGPoint {
+        let origin = textContainerOrigin
+        let ns = string as NSString
+        let glyphCount = layoutManager.numberOfGlyphs
+        guard glyphCount > 0, ns.length > 0 else { return origin }
+
+        if pos >= ns.length {
+            let lastGlyph = layoutManager.glyphIndexForCharacter(at: ns.length - 1)
+            var fragmentRange = NSRange()
+            let lineRect = layoutManager.lineFragmentRect(forGlyphAt: lastGlyph, effectiveRange: &fragmentRange)
+            let lastRect = layoutManager.boundingRect(forGlyphRange: NSRange(location: lastGlyph, length: 1), in: textContainer)
+            return CGPoint(x: origin.x + lastRect.maxX, y: origin.y + lineRect.origin.y)
+        }
+
+        let glyphIndex = min(layoutManager.glyphIndexForCharacter(at: pos), glyphCount - 1)
+        var fragmentRange = NSRange()
+        let lineRect = layoutManager.lineFragmentRect(forGlyphAt: glyphIndex, effectiveRange: &fragmentRange)
+        let location = layoutManager.location(forGlyphAt: glyphIndex)
+        return CGPoint(x: origin.x + lineRect.origin.x + location.x, y: origin.y + lineRect.origin.y)
+    }
+
     private func showGhostText(_ text: String, atCursorPosition pos: Int) {
         guard let layoutManager = layoutManager,
-              let textContainer = textContainer else { return }
+              let textContainer = textContainer,
+              let storage = textStorage else { return }
 
-        // Get the rect for the cursor position
-        let glyphIndex = layoutManager.glyphIndexForCharacter(at: pos)
-        layoutManager.lineFragmentRect(forGlyphAt: min(glyphIndex, layoutManager.numberOfGlyphs > 0 ? layoutManager.numberOfGlyphs - 1 : 0), effectiveRange: nil)
+        let overlay = NSMutableAttributedString(string: text, attributes: ghostAttributes(at: pos))
 
-        let location = layoutManager.location(forGlyphAt: min(glyphIndex, max(0, layoutManager.numberOfGlyphs - 1)))
-        let lineRect = layoutManager.lineFragmentRect(forGlyphAt: min(glyphIndex, max(0, layoutManager.numberOfGlyphs - 1)), effectiveRange: nil)
+        let glyphCount = layoutManager.numberOfGlyphs
+        if glyphCount > 0 {
+            let glyphIndex = min(layoutManager.glyphIndexForCharacter(at: min(pos, max(0, (string as NSString).length - 1))), glyphCount - 1)
+            var fragmentRange = NSRange()
+            layoutManager.lineFragmentRect(forGlyphAt: glyphIndex, effectiveRange: &fragmentRange)
+            let ns = string as NSString
+            let visualChars = layoutManager.characterRange(forGlyphRange: fragmentRange, actualGlyphRange: nil)
+            let restEnd = min(NSMaxRange(visualChars), ns.length)
+            let restRange = NSRange(location: pos, length: max(0, restEnd - pos))
+            if restRange.length > 0 {
+                layoutManager.addTemporaryAttribute(.foregroundColor, value: NSColor.clear, forCharacterRange: restRange)
+                overlay.append(storage.attributedSubstring(from: restRange))
+            }
+        }
 
-        let cursorX = lineRect.origin.x + location.x + textContainerInset.width + textContainer.lineFragmentPadding + 6 // gap between cursor and ghost
-        let cursorY = lineRect.origin.y + textContainerInset.height
+        let ghostStorage = NSTextStorage(attributedString: overlay)
+        let ghostLayout = NSLayoutManager()
+        let ghostContainer = NSTextContainer(size: NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude))
+        ghostContainer.lineFragmentPadding = 0
+        ghostContainer.maximumNumberOfLines = 1
+        ghostLayout.addTextContainer(ghostContainer)
+        ghostStorage.addLayoutManager(ghostLayout)
+        ghostLayout.ensureLayout(for: ghostContainer)
 
-        // Create ghost text layer
-        let layer = CATextLayer()
-        layer.string = text
-        layer.font = Theme.monoFont
-        layer.fontSize = Theme.monoFont.pointSize
-        layer.foregroundColor = NSColor.tertiaryLabelColor.cgColor
-        layer.contentsScale = window?.backingScaleFactor ?? 2.0
-        layer.allowsFontSubpixelQuantization = true
-
-        // Size the layer to fit the text
-        let attrStr = NSAttributedString(string: text, attributes: [.font: Theme.monoFont])
-        let textSize = attrStr.size()
-        layer.frame = CGRect(
-            x: cursorX,
-            y: cursorY,
-            width: textSize.width + 4,
-            height: lineRect.height
-        )
-
-        // Align text vertically within the layer
-        layer.alignmentMode = .left
-
-        self.layer?.addSublayer(layer)
-        ghostLayer = layer
+        ghostTextStorage = ghostStorage
+        ghostDrawOrigin = computeGhostDrawOrigin(atCharacter: pos, layoutManager: layoutManager, textContainer: textContainer)
+        needsDisplay = true
     }
 
     private func clearGhost() {
-        ghostLayer?.removeFromSuperlayer()
-        ghostLayer = nil
+        if let layoutManager = layoutManager {
+            let len = (string as NSString).length
+            if len > 0 {
+                layoutManager.removeTemporaryAttribute(.foregroundColor, forCharacterRange: NSRange(location: 0, length: len))
+            }
+        }
+        ghostTextStorage = nil
         ghostSuggestion = nil
         ghostWordRange = nil
+        needsDisplay = true
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        guard let storage = ghostTextStorage,
+              let lm = storage.layoutManagers.first,
+              let tc = lm.textContainers.first else { return }
+        let range = lm.glyphRange(for: tc)
+        lm.drawGlyphs(forGlyphRange: range, at: ghostDrawOrigin)
     }
 
     /// Accept the current ghost suggestion by pressing Tab.
