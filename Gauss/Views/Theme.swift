@@ -116,8 +116,8 @@ enum Theme {
 
     static var separator: NSColor {
         isDark
-            ? NSColor(white: 0.25, alpha: 0.5)
-            : NSColor(white: 0.8, alpha: 0.5)
+            ? NSColor(white: 0.55, alpha: 0.9)
+            : NSColor(white: 0.45, alpha: 0.85)
     }
 
     // MARK: - Toast

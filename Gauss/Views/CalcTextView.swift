@@ -236,24 +236,27 @@ final class CalcTextView: NSTextView {
 
     // MARK: - Line Metrics
 
-    /// Returns the y-offset and height for each visual line in the text view,
-    /// relative to the text container origin.
+    /// First visual fragment of each logical (`\n`) line. ResultView indexes
+    /// these 1:1 with `evaluateDocument` results.
     func lineMetrics() -> [(y: CGFloat, height: CGFloat)] {
         guard let layoutManager = layoutManager,
-              textContainer != nil else { return [] }
+              let textContainer = textContainer else { return [] }
+        layoutManager.ensureLayout(for: textContainer)
 
         let text = string as NSString
         var metrics: [(y: CGFloat, height: CGFloat)] = []
         var charIndex = 0
         let totalLength = text.length
+        let fallbackHeight = Theme.monoFont.ascender - Theme.monoFont.descender + Theme.monoFont.leading
 
         while charIndex <= totalLength {
             if charIndex == totalLength {
                 if totalLength > 0 && text.character(at: totalLength - 1) == 0x0A {
-                    let lastMetric = metrics.last
-                    let y = (lastMetric?.y ?? 0) + (lastMetric?.height ?? 0)
-                    let lineHeight = Theme.monoFont.ascender - Theme.monoFont.descender + Theme.monoFont.leading
-                    metrics.append((y: y, height: lineHeight))
+                    let last = metrics.last
+                    metrics.append((
+                        y: (last?.y ?? 0) + (last?.height ?? 0),
+                        height: fallbackHeight
+                    ))
                 }
                 break
             }
@@ -265,18 +268,21 @@ final class CalcTextView: NSTextView {
                 effectiveRange: &effectiveRange
             )
 
-            metrics.append((y: lineRect.origin.y, height: lineRect.height))
+            let isLogicalStart = charIndex == 0
+                || text.character(at: charIndex - 1) == 0x0A
+            if isLogicalStart {
+                metrics.append((
+                    y: lineRect.origin.y,
+                    height: lineRect.height > 0 ? lineRect.height : fallbackHeight
+                ))
+            }
 
             let charRange = layoutManager.characterRange(
                 forGlyphRange: effectiveRange,
                 actualGlyphRange: nil
             )
             let nextCharIndex = NSMaxRange(charRange)
-            if nextCharIndex <= charIndex {
-                charIndex += 1
-            } else {
-                charIndex = nextCharIndex
-            }
+            charIndex = nextCharIndex <= charIndex ? charIndex + 1 : nextCharIndex
         }
 
         return metrics

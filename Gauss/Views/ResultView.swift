@@ -13,6 +13,7 @@ final class ResultView: NSView {
     private var lineResults: [GaussEngine.LineResult] = []
     private var lineMetrics: [(y: CGFloat, height: CGFloat)] = []
     private var textContainerInset: NSSize = NSSize(width: 8, height: 8)
+    private var widthConstraint: NSLayoutConstraint?
 
     // Tracking area for hover
     private var trackingArea: NSTrackingArea?
@@ -22,13 +23,43 @@ final class ResultView: NSView {
 
     // MARK: - Update
 
+    func attachWidthConstraint() {
+        let constraint = widthAnchor.constraint(equalToConstant: Self.minWidth)
+        constraint.isActive = true
+        widthConstraint = constraint
+    }
+
     func update(with results: [GaussEngine.LineResult], textView: CalcTextView) {
         lineResults = results
+        // Resize first and re-layout, so the editor re-wraps before we read its line metrics.
+        let available = superview?.bounds.width ?? 0
+        widthConstraint?.constant = Self.width(for: results, available: available)
+        superview?.layoutSubtreeIfNeeded()
         lineMetrics = textView.lineMetrics()
         textContainerInset = textView.textContainerInset
         needsDisplay = true
         updateTrackingArea()
         announceResultsIfNeeded(results)
+    }
+
+    private static let minWidth: CGFloat = 48
+    private static let maxWidth: CGFloat = 280
+    private static let horizontalPadding: CGFloat = 16
+    /// Results never take more than this share of the window; longer values truncate with "…".
+    private static let maxShareOfWindow: CGFloat = 0.45
+
+    private static func width(for results: [GaussEngine.LineResult], available: CGFloat) -> CGFloat {
+        let font = Theme.monoFont
+        var widest: CGFloat = 0
+        for result in results where !result.formatted.isEmpty {
+            let w = NSAttributedString(
+                string: result.formatted,
+                attributes: [.font: font]
+            ).size().width
+            if w > widest { widest = w }
+        }
+        let cap = available > 0 ? min(maxWidth, available * maxShareOfWindow) : maxWidth
+        return min(cap, max(minWidth, ceil(widest) + horizontalPadding))
     }
 
     // MARK: - Accessibility
@@ -84,6 +115,13 @@ final class ResultView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
+
+        Theme.separator.setStroke()
+        let divider = NSBezierPath()
+        divider.lineWidth = 1
+        divider.move(to: NSPoint(x: 0.5, y: 0))
+        divider.line(to: NSPoint(x: 0.5, y: bounds.height))
+        divider.stroke()
 
         let font = Theme.monoFont
         let paragraphStyle = NSMutableParagraphStyle()
