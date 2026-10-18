@@ -129,6 +129,20 @@ final class TokenizerTests: XCTestCase {
         )
     }
 
+    func testMultiWordCurrencyNames() {
+        XCTAssertEqual(
+            tokens("1 Brazilian real in US dollar"),
+            [.number(1), .identifier("Brazilian real"), .keyword(.in), .identifier("US dollar")]
+        )
+    }
+
+    func testMultiWordCurrencyCodesStillSplitAsIdentifiers() {
+        XCTAssertEqual(
+            tokens("1 BRL in USD"),
+            [.number(1), .identifier("BRL"), .keyword(.in), .identifier("USD")]
+        )
+    }
+
     // MARK: - Hex Numbers
 
     func testHexFF() {
