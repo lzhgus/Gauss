@@ -294,6 +294,34 @@ final class CalcTextView: NSTextView {
             return true
         }
 
+        // Cmd+C / X / V / Z: no Edit menu in this LSUIElement app
+        if event.modifierFlags.contains(.command),
+           !event.modifierFlags.contains(.shift),
+           let key = event.charactersIgnoringModifiers?.lowercased() {
+            switch key {
+            case "c":
+                copy(nil)
+                return true
+            case "x":
+                cut(nil)
+                return true
+            case "v":
+                paste(nil)
+                return true
+            case "z":
+                undoManager?.undo()
+                return true
+            default:
+                break
+            }
+        }
+
+        if event.modifierFlags.contains([.shift, .command]),
+           event.charactersIgnoringModifiers?.lowercased() == "z" {
+            undoManager?.redo()
+            return true
+        }
+
         // Cmd+= or Cmd++: increase font size
         if event.modifierFlags.contains(.command),
            event.charactersIgnoringModifiers == "=" || event.charactersIgnoringModifiers == "+" {
