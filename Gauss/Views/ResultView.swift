@@ -31,9 +31,12 @@ final class ResultView: NSView {
 
     func update(with results: [GaussEngine.LineResult], textView: CalcTextView) {
         lineResults = results
+        // Resize first and re-layout, so the editor re-wraps before we read its line metrics.
+        let available = superview?.bounds.width ?? 0
+        widthConstraint?.constant = Self.width(for: results, available: available)
+        superview?.layoutSubtreeIfNeeded()
         lineMetrics = textView.lineMetrics()
         textContainerInset = textView.textContainerInset
-        widthConstraint?.constant = Self.width(for: results)
         needsDisplay = true
         updateTrackingArea()
         announceResultsIfNeeded(results)
@@ -42,8 +45,10 @@ final class ResultView: NSView {
     private static let minWidth: CGFloat = 48
     private static let maxWidth: CGFloat = 280
     private static let horizontalPadding: CGFloat = 16
+    /// Results never take more than this share of the window; longer values truncate with "…".
+    private static let maxShareOfWindow: CGFloat = 0.45
 
-    private static func width(for results: [GaussEngine.LineResult]) -> CGFloat {
+    private static func width(for results: [GaussEngine.LineResult], available: CGFloat) -> CGFloat {
         let font = Theme.monoFont
         var widest: CGFloat = 0
         for result in results where !result.formatted.isEmpty {
@@ -53,7 +58,8 @@ final class ResultView: NSView {
             ).size().width
             if w > widest { widest = w }
         }
-        return min(maxWidth, max(minWidth, ceil(widest) + horizontalPadding))
+        let cap = available > 0 ? min(maxWidth, available * maxShareOfWindow) : maxWidth
+        return min(cap, max(minWidth, ceil(widest) + horizontalPadding))
     }
 
     // MARK: - Accessibility

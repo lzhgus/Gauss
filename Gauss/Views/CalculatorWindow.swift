@@ -162,7 +162,7 @@ final class CalculatorWindowController: NSWindowController {
 
         scrollView.documentView = calcTextView
 
-        // ResultView as an overlay
+        // ResultView as a column to the right of the editor
         resultView = ResultView()
         resultView.translatesAutoresizingMaskIntoConstraints = false
         resultView.attachWidthConstraint()
