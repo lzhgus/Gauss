@@ -184,6 +184,26 @@ final class ArithmeticTests: XCTestCase {
         }
     }
 
+    func testCurrencyConversionByCode() {
+        let result = eval("1 BRL in USD")
+        if case .currency(let val, let code) = result {
+            XCTAssertEqual(code, "USD")
+            XCTAssertEqual(val, 1.0 / 4.97, accuracy: 0.001)
+        } else {
+            XCTFail("Expected currency result, got \(result)")
+        }
+    }
+
+    func testCurrencyConversionByFullName() {
+        let result = eval("1 Brazilian real in US dollar")
+        if case .currency(let val, let code) = result {
+            XCTAssertEqual(code, "USD")
+            XCTAssertEqual(val, 1.0 / 4.97, accuracy: 0.001)
+        } else {
+            XCTFail("Expected currency result, got \(result)")
+        }
+    }
+
     // MARK: - Math Functions
 
     func testSqrt() {
