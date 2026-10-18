@@ -81,6 +81,16 @@ final class CalcTextView: NSTextView {
         }
     }
 
+    /// The ghost hides the rest of the line and redraws it shifted, so it must
+    /// go away as soon as the caret leaves the spot it was computed for.
+    override func setSelectedRanges(_ ranges: [NSValue], affinity: NSSelectionAffinity, stillSelecting: Bool) {
+        super.setSelectedRanges(ranges, affinity: affinity, stillSelecting: stillSelecting)
+        if let wordRange = ghostWordRange,
+           selectedRange() != NSRange(location: NSMaxRange(wordRange), length: 0) {
+            clearGhost()
+        }
+    }
+
     // MARK: - Ghost Text Logic
 
     private func updateGhostSuggestion() {
