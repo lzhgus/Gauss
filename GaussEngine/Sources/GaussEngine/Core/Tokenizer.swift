@@ -218,6 +218,14 @@ public struct Tokenizer {
                     continue
                 }
 
+                if let (phrase, afterPhrase) = tryMatchMultiWordVariant(
+                    word: word, scalars: scalars, from: idx
+                ) {
+                    tokens.append(.identifier(phrase))
+                    idx = afterPhrase
+                    continue
+                }
+
                 // Scale suffix: "billion", "million", "thousand" — but only when
                 // the previous token is a number.
                 if let multiplier = definitions.scales[word] {
@@ -433,6 +441,40 @@ public struct Tokenizer {
         let multiWord = "\(word.lowercased()) \(secondWord.lowercased())"
         if let op = definitions.operators[multiWord] {
             return (.op(op), peek)
+        }
+        return nil
+    }
+
+    private func tryMatchMultiWordVariant(
+        word: String,
+        scalars: [Unicode.Scalar],
+        from afterFirstWord: Int
+    ) -> (String, Int)? {
+        var words = [word]
+        var ends = [afterFirstWord]
+        var peek = afterFirstWord
+
+        for _ in 0..<4 {
+            while peek < scalars.count && CharacterSet.whitespaces.contains(scalars[peek]) { peek += 1 }
+            guard peek < scalars.count && isLetter(scalars[peek]) else { break }
+            let start = peek
+            while peek < scalars.count && (isLetter(scalars[peek]) || isDigit(scalars[peek])) {
+                peek += 1
+            }
+            let next = String(String.UnicodeScalarView(scalars[start..<peek]))
+            if keywordFor(next) != nil { break }
+            words.append(next)
+            ends.append(peek)
+        }
+
+        guard words.count >= 2 else { return nil }
+
+        for i in stride(from: words.count, through: 2, by: -1) {
+            let phrase = words[0..<i].joined(separator: " ")
+            let lower = phrase.lowercased()
+            if definitions.currencyByVariant[lower] != nil || definitions.unitsByVariant[lower] != nil {
+                return (phrase, ends[i - 1])
+            }
         }
         return nil
     }
